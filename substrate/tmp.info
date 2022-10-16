@@ -1,0 +1,47 @@
+### using curl to interact with substrate node ###
+
+# pallet: author, extrinsic: rotateKeys, params: none, returns: key
+curl \
+-H 'Content-Type: application/json' \
+--data '{ 
+    "jsonrpc":"2.0", 
+    "method":"author_rotateKeys", 
+    "id":1 
+    }' \
+localhost:9933
+
+# pallet: author, extrinsic: insertKey, params: 3, returns: none
+curl \
+-H 'Content-Type: application/json' \
+--data '{ 
+    "jsonrpc":"2.0", 
+    "method":"author_insertKey", 
+    "params":[
+        "KEY_TYPE", 
+        "SEED", 
+        "PUBLIC"
+    ],"id":1 
+    }' \
+localhost:9933
+
+# notes
+
+# `KEY_TYPE` - needs to be replaced with the 4-character key type identifier.
+# `SEED` - is the seed of the key.
+# `PUBLIC` - public key for the given key.
+
+
+# pallet: author, extrinsic: insertKey, params: 3, returns: none
+
+
+curl \
+-H 'Content-Type: application/json' \
+--data '{ 
+    "jsonrpc":"2.0", 
+    "method":"esg_esg_score",
+    "params": [
+        "abc:123"
+    ] 
+    "id":1 
+    }' \
+localhost:9933
