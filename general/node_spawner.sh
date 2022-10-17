@@ -20,6 +20,7 @@ ports_ws=(40000)
 ports_rpc=(50000)
 localhost="127.0.0.1"
 # ip_addr_list=("127.0.0.1")
+spec_file="./customSpec.json"
 raw_spec_file="./customSpecRaw.json"
 
 remove() {
@@ -254,14 +255,17 @@ proc_spec() {
 }
 
 gen_raw() {
-    file="customSpecRaw.json"
+    if [ ! -f $spec_file ]; then
+        echo "spec file not found!!."
+        exit
+    fi
     echo -e "\nGenerating raw spec file\n"
+    remove $raw_spec_file
     cmd="./target/$mode/dfs \
     build-spec \
-    --chain=customSpec.json \
+    --chain=$spec_file \
     --raw \
-    --disable-default-bootnode > $file"
-    remove $file
+    --disable-default-bootnode > $raw_spec_file"
     eval $cmd
     if [ -f $file ]; then
         echo "raw spec generated."
@@ -345,6 +349,10 @@ menu() {
         clear
         echo -e "\n0 - generate spec\n1 - process spec\n2 - generate raw\n3 - spawn nodes\n4 - exit\n"
         read -p "Choice: " choice
+
+        if [ -z $choice ]; then
+            continue
+        fi
 
         if [ $choice -eq 0 ]; then
             gen_spec; break
