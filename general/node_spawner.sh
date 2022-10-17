@@ -1,8 +1,10 @@
 #! /bin/bash
 
 cmd=""
-DELAY=2
+# 4 sec delay
+DELAY=4
 mode="r"
+exex_name="dfs"
 tmp_dir=""
 spawn_cmds=()
 phrase=()
@@ -36,9 +38,9 @@ start_clean() {
 }
 
 init_steps() {
-    read -p "Number of nodes (def 3): " num_of_nodes
-    read -p "Number of validators (def 3): " num_of_validators
-    read -p "temp dir path (def ~/tmp): " tmp_dir
+    read -p "Number of nodes (3): " num_of_nodes
+    read -p "Number of validators (3): " num_of_validators
+    read -p "temp dir path (~/tmp): " tmp_dir
 
     if [[ $num_of_validators == "" ]]; then
         num_of_validators=3
@@ -109,7 +111,7 @@ generate_keys() {
     file="tmp_key.txt"
     # collect ed addresses and phrases
     for (( i=0; i<$num_of_validators; i=i+1 )); do
-        eval "./target/$mode/subkey generate --scheme Ed25519 > $file"
+        eval "./target/$mode/$exec_name key generate --scheme Ed25519 > $file"
         phrase+=("$(cat $file | head -1 | cut -d ":" -f 2- | xargs)")
         ed_addr+=("$(cat $file | tail -1 | cut -d ":" -f 2- | xargs)")
         ed_pubkey+=("$(cat $file | head -3 | tail -1 | cut -d ":" -f 2- | xargs)")
@@ -120,7 +122,7 @@ generate_keys() {
     # generate sr keys from pharse generated with above scheme
     # to be used for babe, imol and audi
     for (( i=0; i<$num_of_validators; i=i+1 )); do
-        eval "./target/$mode/subkey inspect --scheme Sr25519 '${phrase[i]}' > $file"
+        eval "./target/$mode/$exec_name key inspect --scheme Sr25519 '${phrase[i]}' > $file"
         sr_addr+=("$(cat $file | tail -1 | cut -d ":" -f 2- | xargs)")
         sr_pubkey+=("$(cat $file | head -3 | tail -1 | cut -d ":" -f 2- | xargs)")
     done
@@ -157,7 +159,7 @@ prep_cmd() {
     else
         mode="debug"
     fi
-    local exec_path="./target/$mode/dfs"
+    local exec_path="./target/$mode/$exec_name"
     if [ ! -f $exec_path -o ! -x $exec_path ]; then
         echo -e "\n" $exec_path " file either doesn't exist or not an executable\n"
         exit
@@ -217,13 +219,12 @@ restart_nodes() {
 }
 
 gen_spec() {
-    file="customSpec.json"
     echo -e "\nGenerating spec file\n"
-    cmd="./target/$mode/dfs build-spec --disable-default-bootnode --chain staging > $file"
-    remove $file
+    cmd="./target/$mode/$exec_name build-spec --disable-default-bootnode --chain staging > $spec_file"
+    remove $spec_file
     eval $cmd
-    if [ -f $file ]; then
-        echo "generated, pls check!"
+    if [ -f $spec_file ]; then
+        echo "spec generated, pls check!"
     else
         echo "failed to generate the file!"
     fi   
@@ -261,71 +262,34 @@ gen_raw() {
     fi
     echo -e "\nGenerating raw spec file\n"
     remove $raw_spec_file
-    cmd="./target/$mode/dfs \
+    cmd="./target/$mode/$exec_name \
     build-spec \
     --chain=$spec_file \
     --raw \
     --disable-default-bootnode > $raw_spec_file"
     eval $cmd
-    if [ -f $file ]; then
+    if [ -f $raw_spec_file ]; then
         echo "raw spec generated."
     else
         echo "failed to generate the file!"
     fi
 }
 
-insert_author_keys() {
-    echo "inserting author keys"
-    # inserting keys into nodes
-    # insering keys for 4 things; gran, babe, imol and audi
-    for (( j=0; j < $num_of_validators; j=j+1 )); do
-        # gran
-        call_rpc "author_insertKey" "[\"gran\",\"${phrase[$j]}\",\"${ed_pubkey[$j]}\"]" $localhost ${ports_rpc[$j]}
-        # echo $rpc_input
-        # echo $rpc_output
-        # other 3
-        others=("babe" "imol" "audi")
-        for i in {0..2}; do
-            call_rpc "author_insertKey" "[\"${others[$i]}\",\"${phrase[$j]}\",\"${sr_pubkey[$j]}\"]" $localhost ${ports_rpc[$j]}
-            # echo $rpc_input
-            # echo $rpc_output
-        done
-    done
-    echo "author key insertions done!!"
-    # restart the nodes after key insertions
-    # kill all nodes and restart
-    # wait some time before killings
-    sleep $DELAY
-    sleep $DELAY
-    pkill -9 dfs
-    sleep $DELAY
-    restart_nodes
-}
-
 # insert_author_keys() {
 #     echo "inserting author keys"
 #     # inserting keys into nodes
-
+#     # insering keys for 4 things; gran, babe, imol and audi
 #     for (( j=0; j < $num_of_validators; j=j+1 )); do
-#         echo -e "\nInserting phrase: ${phrase[$j]}\n"
 #         # gran
-#         cmd="./target/$mode/dfs key insert \
-#         --base-path $tmp_dir/node$j \
-#         --chain customSpecRaw.json \
-#         --scheme Ed25519 \
-#         --suri '${phrase[$j]}' \
-#         --key-type gran"
-#         eval "$cmd"
+#         call_rpc "author_insertKey" "[\"gran\",\"${phrase[$j]}\",\"${ed_pubkey[$j]}\"]" $localhost ${ports_rpc[$j]}
+#         # echo $rpc_input
+#         # echo $rpc_output
 #         # other 3
 #         others=("babe" "imol" "audi")
-#         for (( i=0; i<3; i=i+1 )); do
-#             cmd="./target/$mode/dfs key insert \
-#             --base-path $tmp_dir/node$j \
-#             --chain customSpecRaw.json \
-#             --scheme Sr25519 \
-#             --suri '${phrase[$j]}' \
-#             --key-type ${others[$i]}"
-#             eval "$cmd"
+#         for i in {0..2}; do
+#             call_rpc "author_insertKey" "[\"${others[$i]}\",\"${phrase[$j]}\",\"${sr_pubkey[$j]}\"]" $localhost ${ports_rpc[$j]}
+#             # echo $rpc_input
+#             # echo $rpc_output
 #         done
 #     done
 #     echo "author key insertions done!!"
@@ -334,10 +298,47 @@ insert_author_keys() {
 #     # wait some time before killings
 #     sleep $DELAY
 #     sleep $DELAY
-#     pkill -9 dfs
+#     pkill -9 $exec_name
 #     sleep $DELAY
 #     restart_nodes
 # }
+
+insert_author_keys() {
+    echo "inserting author keys"
+    # inserting keys into nodes
+
+    for (( j=0; j < $num_of_validators; j=j+1 )); do
+        # echo -e "\nInserting phrase: ${phrase[$j]}\n"
+        # gran
+        cmd="./target/$mode/$exec_name key insert \
+        --base-path $tmp_dir/node$j \
+        --chain customSpecRaw.json \
+        --scheme Ed25519 \
+        --suri '${phrase[$j]}' \
+        --key-type gran"
+        eval "$cmd"
+        # other 3
+        others=("babe" "imol" "audi")
+        for (( i=0; i<3; i=i+1 )); do
+            cmd="./target/$mode/$exec_name key insert \
+            --base-path $tmp_dir/node$j \
+            --chain customSpecRaw.json \
+            --scheme Sr25519 \
+            --suri '${phrase[$j]}' \
+            --key-type ${others[$i]}"
+            eval "$cmd"
+        done
+    done
+    echo "author key insertions done!!"
+    # restart the nodes after key insertions
+    # kill all nodes and restart
+    # wait some time before killings
+    sleep $DELAY
+    sleep $DELAY
+    pkill -9 $exec_name
+    sleep $DELAY
+    restart_nodes
+}
 
 post_spawn() {
     echo "post spawn"
@@ -371,11 +372,19 @@ menu() {
 }
 
 start() {
+    read -p "Enter mode (r): " mode
+    read -p "Enter binary name (dfs): " exec_name
+
     if [ $mode == "d" ]; then
         mode="debug"
     else
         mode="release"
     fi
+    
+    if [ -z $exec_name ]; then
+        exec_name="dfs"
+    fi
+
     menu
 }
 
