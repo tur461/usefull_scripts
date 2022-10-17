@@ -3,10 +3,16 @@
 cmd=""
 DELAY=2
 mode="r"
-ed_pubkey=""
-sr_pubkey=""
+tmp_dir=""
+spawn_cmds=()
+phrase=()
+ed_pubkey=()
+sr_pubkey=()
+ed_addr=()
+sr_addr=()
 peer_id=""
 key_phrase=""
+num_of_validators=""
 ports=(30000)
 rpc_input=""
 rpc_output=""
@@ -22,9 +28,23 @@ remove() {
     fi
 }
 
+start_clean() { 
+    for (( i=0; i < $num_of_nodes; i=i+1 )); do
+        rm -rf "$tmp_dir/node$i"
+    done
+}
+
 init_steps() {
     read -p "Number of nodes (def 3): " num_of_nodes
+    read -p "Number of validators (def 3): " num_of_validators
     read -p "temp dir path (def ~/tmp): " tmp_dir
+
+    if [[ $num_of_validators == "" ]]; then
+        num_of_validators=3
+    elif [ $num_of_validators -eq 0 ]; then
+        echo "invalid num of validators!"
+        exit
+    fi
 
     if [[ $num_of_nodes == "" ]]; then
         num_of_nodes=3
@@ -41,10 +61,10 @@ init_steps() {
         mode="d"
     fi
 
-    if [ ! -f $raw_spec_file ]; then
-        echo -e "\npls generate customSepcRaw.json spec file first!!\n"
-        exit
-    fi
+    # if [ ! -f $raw_spec_file ]; then
+    #     echo -e "\npls generate customSepcRaw.json spec file first!!\n"
+    #     exit
+    # fi
     for (( i=0; i<$num_of_nodes-1; i=i+1)); do
         ports+=( $( bc -q <<< "${ports[$i]} + 1" ) )
         ports_ws+=( $( bc -q <<< "${ports_ws[$i]} + 1" ) )
@@ -55,6 +75,7 @@ init_steps() {
         echo -e "$p"
     done
     echo -e "\n\n"
+    start_clean
 }
 
 get_data() {
@@ -84,23 +105,41 @@ generate_keys() {
     # gran, babe, imol, audi
 
     # generate Ed25519 key for granpa
-    file="keys_ed.txt"
-    if [ ! -f $file ]; then
+    file="tmp_key.txt"
+    # collect ed addresses and phrases
+    for (( i=0; i<$num_of_validators; i=i+1 )); do
         eval "./target/$mode/subkey generate --scheme Ed25519 > $file"
-    fi
-    phrase="$(cat $file | head -1 | cut -d ":" -f 2- | xargs)"
-    ed_pubkey="$(cat $file | head -3 | tail -1 | cut -d ":" -f 2- | xargs)"
-    # echo -e "\nEd25519:\nphrase: $phrase\ned-addr: $ed_pubkey"
-    
+        phrase+=("$(cat $file | head -1 | cut -d ":" -f 2- | xargs)")
+        ed_addr+=("$(cat $file | tail -1 | cut -d ":" -f 2- | xargs)")
+        ed_pubkey+=("$(cat $file | head -3 | tail -1 | cut -d ":" -f 2- | xargs)")
+    done
+    echo -e "\nphrases:\n" ${phrase[@]}
+    echo -e "\nEds:\n" ${ed_addr[@]}
+
     # generate sr keys from pharse generated with above scheme
     # to be used for babe, imol and audi
-    file="keys_sr.txt"
-    if [ ! -f $file ]; then
-        eval "./target/$mode/subkey inspect --scheme Sr25519 '$phrase' > $file"
-    fi
-    phrase="$(cat $file | head -1 | cut -d ":" -f 2- | xargs)"
-    sr_pubkey="$(cat $file | head -3 | tail -1 | cut -d ":" -f 2- | xargs)"
-    # echo -e "\nSr25519:\nphrase: $phrase\nsr-addr: $sr_pubkey" 
+    for (( i=0; i<$num_of_validators; i=i+1 )); do
+        eval "./target/$mode/subkey inspect --scheme Sr25519 '${phrase[i]}' > $file"
+        sr_addr+=("$(cat $file | tail -1 | cut -d ":" -f 2- | xargs)")
+        sr_pubkey+=("$(cat $file | head -3 | tail -1 | cut -d ":" -f 2- | xargs)")
+    done
+    echo -e "\nSrs:\n" ${sr_addr[@]}
+    
+    echo -e "\nKindly save the following session keys into customSpec.json file.\n"
+    for (( i=0; i<$num_of_validators; i=i+1 )); do
+        echo -e "\n"
+        t="{
+    \"grandpa\": \"${ed_addr[$i]}\",
+    \"babe\": \"${sr_addr[$i]}\",
+    \"im_online\": \"${sr_addr[$i]}\",
+    \"authority_discovery\": \"${sr_addr[$i]}\"
+}" 
+        echo "$t"
+        # echo "$t" | python3 -m json.tool
+    done
+    read -p "Once done, press return key to continue: " tmp
+    echo -e "\nGenerating raw spec file.."
+    gen_raw
 }
 
 prep_cmd() {
@@ -144,6 +183,7 @@ prep_cmd() {
 
 spawn_nodes() {
     prep_cmd 0 ${ports[0]} ${ports_ws[0]} ${ports_rpc[0]} $localhost
+    spawn_cmds+=("\"$cmd\"")
     # here log node params
     bash -c "eval $cmd"
     echo -e "\npls wait for $DELAY sec..\n"
@@ -153,6 +193,7 @@ spawn_nodes() {
 
     for (( i=1; i < $num_of_nodes; i = i+1 )); do
         prep_cmd $i ${ports[$i]} ${ports_ws[$i]} ${ports_rpc[$i]} $localhost ${ports[$( bc -q <<< "$i-1" )]} $peer_id
+        spawn_cmds+=("\"$cmd\"")
         # echo -e "\nrun cmd\n" $cmd
         # here log node params
         bash -c "eval $cmd"
@@ -162,6 +203,16 @@ spawn_nodes() {
         get_local_peer_id $localhost ${ports_rpc[$i]}
         echo -e "\nParsed PeerId " $peer_id
     done
+}
+
+restart_nodes() {
+    clear
+    echo -e "\restarting nodes.."
+    for (( i=0; i < $num_of_nodes; i=i+1 )); do
+        bash -c "eval ${spawn_cmds[$i]}"
+        sleep $DELAY
+    done
+    echo -e "\n\n3nj0y!!!"
 }
 
 gen_spec() {
@@ -213,35 +264,80 @@ gen_raw() {
     remove $file
     eval $cmd
     if [ -f $file ]; then
-        echo "generated, pls check!"
+        echo "raw spec generated."
     else
         echo "failed to generate the file!"
     fi
 }
 
-post_spawn() {
-    echo "post spawn"
+insert_author_keys() {
     echo "inserting author keys"
     # inserting keys into nodes
-    if [[ $pharse == "" || $ed_pubkey == "" || $sr_pubkey == "" ]]; then
-        generate_keys
-    fi
-    # echo -e "\n\nPhrase: $phrase\n\n"
-    # echo -e "\n\ned address: $ed_pubkey\n\n"
-    # echo -e "\n\nsr address: $sr_pubkey\n\n"
     # insering keys for 4 things; gran, babe, imol and audi
-    # gran
-    call_rpc "author_insertKey" "[\"gran\",\"$phrase\",\"$ed_pubkey\"]" $localhost ${ports_rpc[0]}
-    # echo $rpc_input
-    # echo $rpc_output
-    # other 3
-    others=("babe" "imol" "audi")
-    for i in {0..2}; do
-        call_rpc "author_insertKey" "[\"${others[$i]}\",\"$phrase\",\"$sr_pubkey\"]" $localhost ${ports_rpc[0]}
+    for (( j=0; j < $num_of_validators; j=j+1 )); do
+        # gran
+        call_rpc "author_insertKey" "[\"gran\",\"${phrase[$j]}\",\"${ed_pubkey[$j]}\"]" $localhost ${ports_rpc[$j]}
         # echo $rpc_input
         # echo $rpc_output
+        # other 3
+        others=("babe" "imol" "audi")
+        for i in {0..2}; do
+            call_rpc "author_insertKey" "[\"${others[$i]}\",\"${phrase[$j]}\",\"${sr_pubkey[$j]}\"]" $localhost ${ports_rpc[$j]}
+            # echo $rpc_input
+            # echo $rpc_output
+        done
     done
     echo "author key insertions done!!"
+    # restart the nodes after key insertions
+    # kill all nodes and restart
+    # wait some time before killings
+    sleep $DELAY
+    sleep $DELAY
+    pkill -9 dfs
+    sleep $DELAY
+    restart_nodes
+}
+
+# insert_author_keys() {
+#     echo "inserting author keys"
+#     # inserting keys into nodes
+
+#     for (( j=0; j < $num_of_validators; j=j+1 )); do
+#         echo -e "\nInserting phrase: ${phrase[$j]}\n"
+#         # gran
+#         cmd="./target/$mode/dfs key insert \
+#         --base-path $tmp_dir/node$j \
+#         --chain customSpecRaw.json \
+#         --scheme Ed25519 \
+#         --suri '${phrase[$j]}' \
+#         --key-type gran"
+#         eval "$cmd"
+#         # other 3
+#         others=("babe" "imol" "audi")
+#         for (( i=0; i<3; i=i+1 )); do
+#             cmd="./target/$mode/dfs key insert \
+#             --base-path $tmp_dir/node$j \
+#             --chain customSpecRaw.json \
+#             --scheme Sr25519 \
+#             --suri '${phrase[$j]}' \
+#             --key-type ${others[$i]}"
+#             eval "$cmd"
+#         done
+#     done
+#     echo "author key insertions done!!"
+#     # restart the nodes after key insertions
+#     # kill all nodes and restart
+#     # wait some time before killings
+#     sleep $DELAY
+#     sleep $DELAY
+#     pkill -9 dfs
+#     sleep $DELAY
+#     restart_nodes
+# }
+
+post_spawn() {
+    echo "post spawn"
+    insert_author_keys
 }
 
 menu() {
@@ -257,7 +353,7 @@ menu() {
         elif [ $choice -eq 2 ]; then
             gen_raw; break
         elif [ $choice -eq 3 ]; then
-            init_steps; spawn_nodes; post_spawn; break
+            init_steps; generate_keys; spawn_nodes; post_spawn; break
         elif [ $choice -eq 4 ]; then
             echo -e "\nthank u for using this script!!\n";break
         else
@@ -272,7 +368,6 @@ start() {
     else
         mode="release"
     fi
-    generate_keys
     menu
 }
 
