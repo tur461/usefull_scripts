@@ -1,27 +1,35 @@
 #! /bin/bash
 
-cmd=""
-# 4 sec delay
-DELAY=4
-mode="r"
-exex_name="dfs"
-tmp_dir=""
-spawn_cmds=()
+port=30000
+ws_port=40000
+rpc_port=50000
+localhost="127.0.0.1"
+peer_ip=$localhost
+
+ports=($port)
+ports_ws=($ws_port)
+ports_rpc=($rpc_port)
+
+
 phrase=()
-ed_pubkey=()
-sr_pubkey=()
 ed_addr=()
 sr_addr=()
+ed_pubkey=()
+sr_pubkey=()
+
+spawn_cmds=()
+
+cmd=""
+mode="r"
+DELAY=4 # 4 sec delay
 peer_id=""
-key_phrase=""
-num_of_validators=""
-ports=(30000)
 rpc_input=""
+key_phrase=""
 rpc_output=""
-ports_ws=(40000)
-ports_rpc=(50000)
-localhost="127.0.0.1"
-# ip_addr_list=("127.0.0.1")
+num_of_validators=""
+
+exec_name="dfs"
+tmp_dir="$HOME/tmp"
 spec_file="./customSpec.json"
 raw_spec_file="./customSpecRaw.json"
 
@@ -150,9 +158,8 @@ prep_cmd() {
     local port=$2
     local port_ws=$3
     local port_rpc=$4
-    local ip_addr_peer=$5
-    local port_peer=$6
-    local id_peer=$7
+    local port_peer=$5
+    local id_peer=$6
 
     if [ mode != "d" ]; then
         mode="release"
@@ -168,7 +175,7 @@ prep_cmd() {
     if [[ $id_peer = "" || $port_peer = "" ]]; then
         other_node=""
     else
-        other_node="--bootnodes /ip4/$ip_addr_peer/tcp/$port_peer/p2p/$id_peer"
+        other_node="--bootnodes /ip4/$peer_ip/tcp/$port_peer/p2p/$id_peer"
     fi
     
     cmd="$exec_path \
@@ -184,24 +191,22 @@ prep_cmd() {
     --name node$i $other_node &"
 }
 
-spawn_nodes() {
-    prep_cmd 0 ${ports[0]} ${ports_ws[0]} ${ports_rpc[0]} $localhost
+spawn_node() {
+    prep_cmd $1 $2 $3 $4 $5 $6
     spawn_cmds+=("\"$cmd\"")
     # here log node params
     bash -c "eval $cmd"
     echo -e "\npls wait for $DELAY sec..\n"
     sleep $DELAY
+}
+
+spawn_nodes() {
+    spawn_node 0 ${ports[0]} ${ports_ws[0]} ${ports_rpc[0]}
     get_local_peer_id $localhost ${ports_rpc[0]}
     echo -e "\nParsed PeerId: " $peer_id
 
     for (( i=1; i < $num_of_nodes; i = i+1 )); do
-        prep_cmd $i ${ports[$i]} ${ports_ws[$i]} ${ports_rpc[$i]} $localhost ${ports[$( bc -q <<< "$i-1" )]} $peer_id
-        spawn_cmds+=("\"$cmd\"")
-        # echo -e "\nrun cmd\n" $cmd
-        # here log node params
-        bash -c "eval $cmd"
-        echo -e "\npls wait for $DELAY sec..\n"
-        sleep $DELAY
+        spawn_node $i ${ports[$i]} ${ports_ws[$i]} ${ports_rpc[$i]} ${ports[$( bc -q <<< "$i-1" )]} $peer_id
         # get peer id of node, just started, for next iteration
         get_local_peer_id $localhost ${ports_rpc[$i]}
         echo -e "\nParsed PeerId " $peer_id
@@ -345,10 +350,50 @@ post_spawn() {
     insert_author_keys
 }
 
+parse_last_node() {
+
+}
+
+append_node() {
+    read -p "Peer port: " peer_port
+    read -p "Peer IP addr (localhost): " peer_ip
+    read -p "Binary name (dfs): " exec_name
+    
+    if [ -z $peer_ip ]; then
+        peer_ip=$localhost
+    fi
+
+    if [ ! -f $spec_file ]; then
+        echo -e "\nGenerate spec file first!!"
+        exit
+    fi
+
+    get_local_peer_id $ip_addr $port
+
+    if [ -z "$(echo $peer_id | xargs)" ]; then
+        echo -e "\nCannot get id of the peer!!"
+        exit
+    fi
+
+    
+
+    local _i = $(bc -q <<< "$peer_port - $port")
+    local _ws_port = $(bc -q <<< "$ws_port + $_i")
+    local _rpc_port = $(bc -q <<< "$rpc_port + $_i")
+    spawn_node $_i $_ws_port $_rpc_port $peer_port 
+
+}
+
+kill_nodes() {
+    echo -e "\nKilling all the nodes.."
+    pkill -9 $exec_name
+    echo -e "\n\n"
+}
+
 menu() {
     while true; do
         clear
-        echo -e "\n0 - generate spec\n1 - process spec\n2 - generate raw\n3 - spawn nodes\n4 - exit\n"
+        echo -e "\n0 - generate spec\n1 - process spec\n2 - generate raw\n3 - spawn nodes\n4 - append node\n5 - kill nodes\n99 - exit\n"
         read -p "Choice: " choice
 
         if [ -z $choice ]; then
@@ -364,6 +409,10 @@ menu() {
         elif [ $choice -eq 3 ]; then
             init_steps; generate_keys; spawn_nodes; post_spawn; break
         elif [ $choice -eq 4 ]; then
+            append_node; break
+        elif [ $choice -eq 5 ]; then
+            kill_nodes; break
+        elif [ $choice -eq 99 ]; then
             echo -e "\nthank u for using this script!!\n";break
         else
             read -p "Invalid choice (press return key to continue): " _
